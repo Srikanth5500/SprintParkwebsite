@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import mysql.connector
 import re
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
@@ -59,6 +60,9 @@ def signup():
     if not is_valid:
         return jsonify({"error": error_msg}), 400
 
+    # Hash the password before storing it
+    password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+
     created_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
     conn = get_db_connection()
@@ -70,7 +74,7 @@ def signup():
         cursor.execute('''
             INSERT INTO users (username, email, password_hash, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, status, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ''', (username, email, password, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, 'active', created_at))
+        ''', (username, email, password_hash, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, 'active', created_at))
         conn.commit()
         return jsonify({"message": "User signed up successfully."}), 201
     except mysql.connector.IntegrityError:
@@ -78,13 +82,14 @@ def signup():
     finally:
         cursor.close()
         conn.close()
+
 # Signin Endpoint
 @app.route('/signin', methods=['POST'])
 def signin():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"error": "Invalid JSON format."}), 400
+            return jsonify({"error": "Invalid JSON format. Please Check."}), 400
 
         username = data.get('username')
         password = data.get('password')
@@ -108,8 +113,8 @@ def signin():
             if user['status'] != 'active':
                 return jsonify({"error": "Account is not active."}), 403
 
-            # Check if the stored password matches the provided password
-            if user['password_hash'] == password:
+            # Check if the stored hash matches the provided password
+            if check_password_hash(user['password_hash'], password):
                 return jsonify({
                     "message": "Signin successful.",
                     "full_name": user["full_name"],
