@@ -10,9 +10,11 @@ app = Flask(__name__)
 DB_CONFIG = {
     'host': 'localhost',
     'user': 'root',
-    'password': '5500',
+    'port': '3306',
+    'password': '3isha417',
     'database': 'sprintparkwebsite'
 }
+
 
 def get_db_connection():
     try:
@@ -39,42 +41,27 @@ def is_strong_password(password):
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.get_json()
-
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-    full_name = data.get('full_name')
-    designation = data.get('designation')
-    reporting_manager = data.get('reporting_manager')
-    employee_id = data.get('employee_id')
-    mobile_number = data.get('mobile_number')
-    location = data.get('location')
-    date_of_birth = data.get('date_of_birth')  # Expected format: YYYY-MM-DD
-    blood_group = data.get('blood_group')
-
-    if not all([username, email, password, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group]):
+    
+    required_fields = ["username", "email", "password", "full_name", "designation", "reporting_manager", "employee_id", "mobile_number", "location", "date_of_birth", "blood_group"]
+    if not all(data.get(field) for field in required_fields):
         return jsonify({"error": "All fields are required."}), 400
-
-    # Validate password strength
-    is_valid, error_msg = is_strong_password(password)
+    
+    is_valid, error_msg = is_strong_password(data['password'])
     if not is_valid:
         return jsonify({"error": error_msg}), 400
-
-    # Hash the password before storing it
-    password_hash = generate_password_hash(password, method='pbkdf2:sha256')
-
-    created_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-
+    
+    data['password'] = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Database connection failed."}), 500
-
+    
     cursor = conn.cursor()
     try:
         cursor.execute('''
-            INSERT INTO users (username, email, password_hash, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, status, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ''', (username, email, password_hash, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, 'active', created_at))
+            INSERT INTO users (username, email, password, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (data['username'], data['email'], data['password'], data['full_name'], data['designation'], data['reporting_manager'], data['employee_id'], data['mobile_number'], data['location'], data['date_of_birth'], data['blood_group'], 'active'))
         conn.commit()
         return jsonify({"message": "User signed up successfully."}), 201
     except mysql.connector.IntegrityError:
@@ -86,54 +73,60 @@ def signup():
 # Signin Endpoint
 @app.route('/signin', methods=['POST'])
 def signin():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON format. Please check."}), 400
+    
+    required_fields = ["username", "password"]
+    if not all(data.get(field) for field in required_fields):
+        return jsonify({"error": "All fields are required."}), 400
+    
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"error": "Database connection failed."}), 500
+    
+    cursor = conn.cursor(dictionary=True)
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON format. Please Check."}), 400
+        cursor.execute('SELECT email, password, status, full_name, designation, reporting_manager, employee_id FROM users WHERE username = %s', (data['username'],))
+        user = cursor.fetchone()
+        
+        if not user:
+            return jsonify({"error": "User does not exist."}), 404
+        if user['status'] != 'active':
+            return jsonify({"error": "Account is not active."}), 403
+        
+        if check_password_hash(user['password'], data['password']):
+            return jsonify({
+                "message": "Signin successful.",
+                "full_name": user["full_name"],
+                "designation": user["designation"],
+                "reporting_manager": user["reporting_manager"],
+                "employee_id": user["employee_id"],
+                "email": user["email"]
+            }), 200
+        else:
+            return jsonify({"error": "Invalid password."}), 401
+    finally:
+        cursor.close()
+        conn.close()
 
-        username = data.get('username')
-        password = data.get('password')
-
-        if not all([username, password]):
-            return jsonify({"error": "All fields are required."}), 400
-
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({"error": "Database connection failed."}), 500
-
-        cursor = conn.cursor(dictionary=True)
-
-        try:
-            cursor.execute('SELECT email, password_hash, status, full_name, designation, reporting_manager, employee_id FROM users WHERE username = %s', (username,))
-            user = cursor.fetchone()
-
-            if not user:
-                return jsonify({"error": "User does not exist."}), 404
-
-            if user['status'] != 'active':
-                return jsonify({"error": "Account is not active."}), 403
-
-            # Check if the stored hash matches the provided password
-            if check_password_hash(user['password_hash'], password):
-                return jsonify({
-                    "message": "Signin successful.",
-                    "full_name": user["full_name"],
-                    "designation": user["designation"],
-                    "reporting_manager": user["reporting_manager"],
-                    "employee_id": user["employee_id"],
-                    "email": user["email"]
-                }), 200
-            else:
-                return jsonify({"error": "Invalid password."}), 401
-
-        finally:
-            cursor.close()
-            conn.close()
-
-    except Exception as e:
-        print(f"Error during signin: {str(e)}")
-        return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
-
+# Get All Employees Endpoint
+@app.route('/getAllEmployees', methods=['GET'])
+def get_all_employees():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"error": "Database connection failed."}), 500
+    
+    cursor = conn.cursor(dictionary=True)   
+    try:
+        cursor.execute('SELECT username, email, full_name, designation, reporting_manager, employee_id, mobile_number, location, date_of_birth, blood_group, status FROM users')
+        employees = cursor.fetchall()
+        return jsonify({"employees": employees}), 200
+    except mysql.connector.Error as err:
+        return jsonify({"error": f"Database error: {err}"}), 500
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == '__main__':
     app.run(debug=True)
